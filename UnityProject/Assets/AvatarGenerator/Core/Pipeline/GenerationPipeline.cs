@@ -5,6 +5,7 @@ using AvatarGenerator.Core.Resolution;
 using AvatarGenerator.Core.Landmarks;
 using AvatarGenerator.Core.Skeleton;
 using AvatarGenerator.Core.Regions;
+using AvatarGenerator.Core.Morph;
 using AvatarGenerator.Core.Pipeline;
 using UnityEngine;
 
@@ -17,6 +18,9 @@ namespace AvatarGenerator.Core.Pipeline
         private readonly IDependencyGraph _dependencyGraph;
         private readonly IRegionDeformer _regionDeformer;
         private readonly IExpressionEvaluator _expressionEvaluator;
+        private readonly MorphBlender _morphBlender;
+        private readonly MorphDefinition[] _bodyMorphs;
+        private readonly MorphDefinition[] _faceMorphs;
 
         public GenerationPipeline(
             CanonModel canon,
@@ -30,6 +34,12 @@ namespace AvatarGenerator.Core.Pipeline
             _dependencyGraph = dependencyGraph;
             _regionDeformer = regionDeformer;
             _expressionEvaluator = expressionEvaluator;
+
+            var morphGen = new ProceduralMorphGenerator(canon);
+            int estimatedVerts = 5000;
+            _bodyMorphs = morphGen.GenerateBodyMorphs(estimatedVerts);
+            _faceMorphs = morphGen.GenerateFaceMorphs(estimatedVerts);
+            _morphBlender = new MorphBlender(_bodyMorphs);
         }
 
         public GeneratedCharacter Generate(CharacterDefinition definition)
@@ -79,7 +89,14 @@ namespace AvatarGenerator.Core.Pipeline
             var regionHash = Hash(regionResults);
             cache.MorphHash = regionHash;
 
-            var finalMesh = GenerateFinalMesh(skeleton, regionResults, resolved);
+            var bodyMorphWeights = _morphBlender.ComputeWeights(resolved, _canon);
+            var bodyMorphDeltas = _morphBlender.Blend(bodyMorphWeights, _bodyMorphs);
+
+            var faceMorphBlender = new MorphBlender(_faceMorphs);
+            var faceMorphWeights = faceMorphBlender.ComputeWeights(resolved, _canon);
+            var faceMorphDeltas = faceMorphBlender.Blend(faceMorphWeights, _faceMorphs);
+
+            var finalMesh = GenerateFinalMesh(skeleton, regionResults, resolved, bodyMorphDeltas, faceMorphDeltas);
             var finalHash = Hash(finalMesh);
 
             var validation = Validate(skeleton, finalMesh, resolved);
@@ -158,7 +175,7 @@ namespace AvatarGenerator.Core.Pipeline
             };
         }
 
-        private Mesh GenerateFinalMesh(SkeletonDefinition skeleton, RegionDeformResult[] regions, IResolvedParameters resolved)
+        private Mesh GenerateFinalMesh(SkeletonDefinition skeleton, RegionDeformResult[] regions, IResolvedParameters resolved, MorphDeltas bodyMorphs, MorphDeltas faceMorphs)
         {
             var mesh = new Mesh();
             mesh.name = "ProceduralCharacter";
@@ -172,6 +189,26 @@ namespace AvatarGenerator.Core.Pipeline
             var nameToIndex = new Dictionary<string, int>();
             for (int i = 0; i < skeleton.Bones.Length; i++)
                 nameToIndex[skeleton.Bones[i].Name] = i;
+
+            var morphDeltas = new Dictionary<int, Vector3>();
+            if (bodyMorphs.VertexIndices != null)
+            {
+                for (int i = 0; i < bodyMorphs.VertexIndices.Length; i++)
+                {
+                    morphDeltas[bodyMorphs.VertexIndices[i]] = bodyMorphs.Deltas[i];
+                }
+            }
+            if (faceMorphs.VertexIndices != null)
+            {
+                for (int i = 0; i < faceMorphs.VertexIndices.Length; i++)
+                {
+                    int idx = faceMorphs.VertexIndices[i];
+                    if (morphDeltas.ContainsKey(idx))
+                        morphDeltas[idx] += faceMorphs.Deltas[i];
+                    else
+                        morphDeltas[idx] = faceMorphs.Deltas[i];
+                }
+            }
 
             foreach (var region in regions)
             {
@@ -187,8 +224,16 @@ namespace AvatarGenerator.Core.Pipeline
                 var regionMesh = CreatePrimitiveForBone(bone, scale);
                 int startVert = vertices.Count;
 
-                foreach (var v in regionMesh.vertices)
+                for (int i = 0; i < regionMesh.vertices.Length; i++)
                 {
+                    var v = regionMesh.vertices[i];
+                    int globalIdx = startVert + i;
+
+                    if (morphDeltas.TryGetValue(globalIdx, out var delta))
+                    {
+                        v += delta;
+                    }
+
                     vertices.Add(v);
                     var bw = new BoneWeight
                     {
