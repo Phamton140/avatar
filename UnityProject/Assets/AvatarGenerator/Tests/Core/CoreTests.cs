@@ -1,8 +1,10 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEngine;
 using AvatarGenerator.Core.Parameters;
 using AvatarGenerator.Core.Resolution;
 using AvatarGenerator.Core.Dependencies;
+using AvatarGenerator.Core.Serialization;
 
 namespace AvatarGenerator.Tests.Core
 {
@@ -395,6 +397,135 @@ namespace AvatarGenerator.Tests.Core
                 }
             }
             return matrices;
+}
+        }
+    }
+
+    public class PresetSystemTests
+    {
+        private ParameterSchema _schema;
+        private CanonModel _canon;
+        private RuleEngine _ruleEngine;
+        private DependencyGraph _graph;
+        private PresetLibrary _library;
+        private PresetApplier _applier;
+
+        [SetUp]
+        public void Setup()
+        {
+            _schema = ParameterSchema.CreateDefault();
+            _canon = new CanonModel();
+            _ruleEngine = new RuleEngine();
+            _graph = new DependencyGraph();
+            _library = PresetLibrary.CreateDefault();
+            _applier = new PresetApplier(_library, _schema);
+        }
+
+        [Test]
+        public void DefaultPresets_Exist()
+        {
+            Assert.IsNotNull(_library.Get("HUMAN_REALISTIC"));
+            Assert.IsNotNull(_library.Get("ANIME"));
+            Assert.IsNotNull(_library.Get("CHIBI"));
+            Assert.IsNotNull(_library.Get("HEROIC"));
+            Assert.IsNotNull(_library.Get("ATHLETIC_BUILD"));
+            Assert.IsNotNull(_library.Get("HEAVY_BUILD"));
+            Assert.IsNotNull(_library.Get("THIN_BUILD"));
+            Assert.IsNotNull(_library.Get("ELDERLY"));
+            Assert.IsNotNull(_library.Get("CHILD"));
+        }
+
+        [Test]
+        public void ApplyPreset_SetsParameters()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPreset(bag, "HUMAN_REALISTIC");
+
+            Assert.AreEqual(1.75f, bag.GetValue("body.height").AsFloat(), 0.001f);
+            Assert.AreEqual(1.0f, bag.GetValue("body.headScale").AsFloat(), 0.001f);
+            Assert.AreEqual(0.5f, bag.GetValue("body.muscleMass").AsFloat(), 0.001f);
+        }
+
+        [Test]
+        public void ApplyAdditivePreset_StacksOnBase()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPreset(bag, "HUMAN_REALISTIC");
+            _applier.ApplyPreset(bag, "ANIME");
+
+            Assert.AreEqual(1.75f, bag.GetValue("body.height").AsFloat(), 0.001f);
+            Assert.AreEqual(1.25f, bag.GetValue("body.headScale").AsFloat(), 0.001f);
+            Assert.AreEqual(1.15f, bag.GetValue("body.legLength").AsFloat(), 0.001f);
+            Assert.AreEqual(1.4f, bag.GetValue("face.eyeSize").AsFloat(), 0.001f);
+        }
+
+        [Test]
+        public void UserOverride_BlocksAdditivePreset()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPreset(bag, "HUMAN_REALISTIC");
+            bag.SetValue("body.headScale", 1.50f, ValueSource.UserOverride);
+            _applier.ApplyPreset(bag, "ANIME");
+
+            Assert.AreEqual(1.50f, bag.GetValue("body.headScale").AsFloat(), 0.001f);
+        }
+
+        [Test]
+        public void ApplyPresetStack_OrdersByPriority()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPresetStack(bag, new[] { "HEROIC", "ATHLETIC_BUILD" });
+
+            Assert.AreEqual(1.9f, bag.GetValue("body.height").AsFloat(), 0.001f);
+            Assert.AreEqual(1.2f, bag.GetValue("body.shoulderWidth").AsFloat(), 0.001f);
+            Assert.AreEqual(0.8f, bag.GetValue("body.muscleMass").AsFloat(), 0.001f);
+        }
+
+        [Test]
+        public void RemovePreset_RestoresAuto()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPreset(bag, "ANIME");
+            _applier.RemovePreset(bag, "ANIME");
+
+            var intent = bag.GetIntent("body.headScale");
+            Assert.AreEqual(ResolutionState.Auto, intent.State);
+        }
+
+        [Test]
+        public void GetActivePresets_DetectsActive()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPreset(bag, "HUMAN_REALISTIC");
+
+            var active = _applier.GetActivePresets(bag);
+            Assert.Contains("HUMAN_REALISTIC", active);
+        }
+
+        [Test]
+        public void AnimePreset_ProducesExpectedProportions()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPreset(bag, "ANIME");
+
+            var resolved = PriorityResolver.Resolve(bag, _canon, _ruleEngine, _graph);
+
+            Assert.Greater(resolved.GetFloat("body.headScale"), 1.1f);
+            Assert.Greater(resolved.GetFloat("face.eyeSize"), 1.2f);
+            Assert.Less(resolved.GetFloat("face.jawWidth"), 0.9f);
+        }
+
+        [Test]
+        public void ChibiPreset_ProducesExpectedProportions()
+        {
+            var bag = new ParameterBag(_schema);
+            _applier.ApplyPreset(bag, "CHIBI");
+
+            var resolved = PriorityResolver.Resolve(bag, _canon, _ruleEngine, _graph);
+
+            Assert.AreEqual(1.2f, resolved.GetFloat("body.height"), 0.01f);
+            Assert.Greater(resolved.GetFloat("body.headScale"), 1.5f);
+            Assert.Less(resolved.GetFloat("body.legLength"), 0.6f);
         }
     }
 }

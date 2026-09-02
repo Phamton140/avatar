@@ -23,8 +23,13 @@ namespace AvatarGenerator.Unity.Editor
         private GeneratedCharacter _generatedCharacter;
         private PipelineCache _cache;
 
+        private PresetLibrary _presetLibrary;
+        private PresetApplier _presetApplier;
+
         private Vector2 _scrollPosition;
+        private Vector2 _presetScrollPosition;
         private string _statusMessage = "Ready";
+        private bool _showPresets = true;
 
         [MenuItem("Window/Avatar Generator/Character Editor")]
         public static void ShowWindow()
@@ -52,10 +57,15 @@ namespace AvatarGenerator.Unity.Editor
 
             _pipeline = new GenerationPipeline(_canon, ruleEngine, dependencyGraph, regionDeformer, expressionEvaluator);
 
+            _presetLibrary = PresetLibrary.CreateDefault();
+            _presetApplier = new PresetApplier(_presetLibrary, _schema);
+
             _currentDefinition = new CharacterDefinition();
             _currentDefinition.Metadata.Name = "New Character";
             _currentDefinition.Metadata.GeneratorVersion = "0.1.0";
             _parameterBag = _currentDefinition.ToParameterBag(_schema);
+
+            ApplyPreset("HUMAN_REALISTIC");
         }
 
         private void SetupDependencies(DependencyGraph graph)
@@ -112,6 +122,93 @@ namespace AvatarGenerator.Unity.Editor
             }
 
             EditorGUILayout.EndHorizontal();
+
+            DrawPresetBrowser();
+        }
+
+        private void DrawPresetBrowser()
+        {
+            _showPresets = EditorGUILayout.Foldout(_showPresets, "Presets", true, EditorStyles.foldoutHeader);
+            if (!_showPresets) return;
+
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            _presetScrollPosition = EditorGUILayout.BeginScrollView(_presetScrollPosition, GUILayout.MaxHeight(200));
+
+            var categories = new HashSet<string>();
+            foreach (var preset in _presetLibrary.Presets)
+            {
+                categories.Add(preset.Category);
+            }
+
+            foreach (var category in categories)
+            {
+                EditorGUILayout.LabelField(category, EditorStyles.boldLabel);
+                EditorGUI.indentLevel++;
+
+                foreach (var preset in _presetLibrary.Presets)
+                {
+                    if (preset.Category != category) continue;
+
+                    var isActive = IsPresetActive(preset.Id);
+                    var label = preset.DisplayName + (isActive ? " ✓" : "");
+
+                    EditorGUILayout.BeginHorizontal();
+
+                    if (GUILayout.Button(label, EditorStyles.miniButtonLeft, GUILayout.ExpandWidth(true)))
+                    {
+                        ApplyPreset(preset.Id);
+                    }
+
+                    if (isActive)
+                    {
+                        if (GUILayout.Button("✕", EditorStyles.miniButtonRight, GUILayout.Width(24)))
+                        {
+                            RemovePreset(preset.Id);
+                        }
+                    }
+
+                    EditorGUILayout.EndHorizontal();
+                }
+
+                EditorGUI.indentLevel--;
+                EditorGUILayout.Space(2);
+            }
+
+            EditorGUILayout.EndScrollView();
+            EditorGUILayout.EndVertical();
+        }
+
+        private bool IsPresetActive(string presetId)
+        {
+            var preset = _presetLibrary.Get(presetId);
+            if (preset == null) return false;
+
+            foreach (var kvp in preset.Parameters)
+            {
+                var intent = _parameterBag.GetIntent(kvp.Key);
+                if (intent.State != ResolutionState.Overridden && intent.State != ResolutionState.Derived)
+                    return false;
+                if (intent.Value.HasValue && kvp.Value.Value.HasValue)
+                {
+                    if (!Mathf.Approximately(intent.Value.Value, kvp.Value.Value.Value))
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        private void ApplyPreset(string presetId)
+        {
+            _presetApplier.ApplyPreset(_parameterBag, presetId);
+            _statusMessage = $"Applied preset: {presetId}";
+            GenerateCharacter();
+        }
+
+        private void RemovePreset(string presetId)
+        {
+            _presetApplier.RemovePreset(_parameterBag, presetId);
+            _statusMessage = $"Removed preset: {presetId}";
+            GenerateCharacter();
         }
 
         private void DrawParameters()
