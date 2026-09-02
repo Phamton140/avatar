@@ -1,0 +1,17 @@
+{
+  "name": "AvatarGenerator.Tests",
+  "rootNamespace": "AvatarGenerator.Tests",
+  "references": [
+    "AvatarGenerator.Core",
+    "AvatarGenerator.Unity"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": []
+}

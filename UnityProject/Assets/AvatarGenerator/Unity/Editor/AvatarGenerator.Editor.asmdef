@@ -1,0 +1,17 @@
+{
+  "name": "AvatarGenerator.Editor",
+  "rootNamespace": "AvatarGenerator.Unity.Editor",
+  "references": [
+    "AvatarGenerator.Core",
+    "AvatarGenerator.Unity"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": []
+}
